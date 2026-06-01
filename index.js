@@ -1,65 +1,58 @@
-const posts = {};
+// ── Alight Helper — Vercel Server ──────────────────────────
+// پۆستەکان لە JSONBin.io ذەخیرە دەکرێن (بەخۆڕایی و بەردەوام)
+// JSONBin API: https://jsonbin.io — تۆمار بکە و BIN_ID و API_KEY بگرەوە
 
-module.exports = async (req, res) => {
-  const url  = new URL(req.url, `https://${req.headers.host}`);
-  const path = url.pathname;
+const JSONBIN_API = "https://api.jsonbin.io/v3";
+const BIN_ID      = process.env.JSONBIN_BIN_ID  || "";
+const API_KEY     = process.env.JSONBIN_API_KEY  || "";
 
-  // ── POST /register ──────────────────────────────────────
-  if (req.method === "POST" && path === "/register") {
-    let body = "";
-    req.on("data", chunk => body += chunk);
-    req.on("end", () => {
-      try {
-        const { postId, category, text, username, mediaUrl } = JSON.parse(body);
-        posts[postId] = { category, text, username, mediaUrl, ts: Date.now() };
-        const link = `https://alighthelper.vercel.app/post/${category}/${postId}`;
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ ok: true, link }));
-      } catch (e) {
-        res.statusCode = 400;
-        res.end(JSON.stringify({ ok: false }));
-      }
+// ── helper: پۆستەکان بخوێنەرە ──────────────────────────────
+async function getPosts() {
+  if (!BIN_ID || !API_KEY) return {};
+  try {
+    const r = await fetch(`${JSONBIN_API}/b/${BIN_ID}/latest`, {
+      headers: { "X-Master-Key": API_KEY }
     });
-    return;
-  }
+    const j = await r.json();
+    return j.record || {};
+  } catch { return {}; }
+}
 
-  // ── GET /post/:category/:id ──────────────────────────────
-  const match2 = path.match(/^\/post\/([^/]+)\/(.+)$/);
-  if (match2) {
-    const category = match2[1];
-    const postId   = match2[2];
-    const post     = posts[postId] || {};
-    const { text = "", username = "Alight Helper", mediaUrl = "" } = post;
-    // ئۆتۆماتیک بەرنامەکە کراوە دەکات
-    const appLink  = `alighthelper://post/${category}/${postId}`;
+// ── helper: پۆستەکان بنووسەرە ──────────────────────────────
+async function setPosts(data) {
+  if (!BIN_ID || !API_KEY) return;
+  try {
+    await fetch(`${JSONBIN_API}/b/${BIN_ID}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Master-Key": API_KEY
+      },
+      body: JSON.stringify(data)
+    });
+  } catch {}
+}
 
-    const ua = req.headers["user-agent"] || "";
-    const isTelegram = ua.includes("TelegramBot") || ua.includes("Telegram");
-
-    // ئەگەر تیلیگرامی بۆت preview — HTML پرۆپەرتی بنێرە
-    // ئەگەر بەکارهێنەر — ریدایرێکت بکە بۆ app
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(`<!DOCTYPE html>
+// ── helper: HTML پەڕەی پۆست ────────────────────────────────
+function postPage(username, text, mediaUrl, appLink, category, postId) {
+  return `<!DOCTYPE html>
 <html lang="ku" dir="rtl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${username} — Alight Helper</title>
-
-  <!-- Open Graph -->
   <meta property="og:title"       content="${username} — Alight Helper">
   <meta property="og:description" content="${text || 'پۆستێکی تازە لە Alight Helper'}">
   <meta property="og:url"         content="https://alighthelper.vercel.app/post/${category}/${postId}">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="Alight Helper">
-  ${mediaUrl ? `<meta property="og:image" content="${mediaUrl}">
+  ${mediaUrl ? `<meta property="og:image"        content="${mediaUrl}">
   <meta property="og:image:width"  content="1200">
   <meta property="og:image:height" content="630">` : ''}
   <meta name="twitter:card"        content="${mediaUrl ? 'summary_large_image' : 'summary'}">
   <meta name="twitter:title"       content="${username} — Alight Helper">
   <meta name="twitter:description" content="${text || 'پۆستێکی تازە لە Alight Helper'}">
   ${mediaUrl ? `<meta name="twitter:image" content="${mediaUrl}">` : ''}
-
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Segoe UI',sans-serif;background:#0f0f13;color:#fff;
@@ -87,7 +80,7 @@ module.exports = async (req, res) => {
     .card-img{width:100%;border-radius:10px;margin-top:12px;object-fit:cover;max-height:200px}
     .spinner{width:32px;height:32px;border:3px solid rgba(255,255,255,.2);
              border-top-color:#7c3aed;border-radius:50%;
-             animation:spin 0.8s linear infinite;margin:0 auto 16px}
+             animation:spin .8s linear infinite;margin:0 auto 16px}
     @keyframes spin{to{transform:rotate(360deg)}}
   </style>
 </head>
@@ -96,25 +89,15 @@ module.exports = async (req, res) => {
   <div class="spinner" id="sp"></div>
   <h1>Alight Helper</h1>
   <p id="msg">کراوەکردنی بەرنامە...</p>
-
   <div class="card" id="card" style="display:none">
     <div class="card-user">👤 ${username}</div>
-    ${text ? `<div class="card-text">${text}</div>` : ''}
-    ${mediaUrl ? `<img class="card-img" src="${mediaUrl}" alt="post">` : ''}
+    ${text    ? `<div class="card-text">${text}</div>`                              : ''}
+    ${mediaUrl? `<img class="card-img" src="${mediaUrl}" alt="post">`               : ''}
   </div>
-
-  <a class="btn btn-primary" href="${appLink}" id="openBtn" style="display:none">
-    کراوەکردنی Alight Helper
-  </a>
-  <a class="btn btn-secondary" href="https://t.me/JACK_721_MOD" style="display:none" id="dlBtn">
-    داگرتنی بەرنامەکە
-  </a>
-
+  <a class="btn btn-primary"   href="${appLink}" id="openBtn" style="display:none">کراوەکردنی Alight Helper</a>
+  <a class="btn btn-secondary" href="https://t.me/JACK_721_MOD" id="dlBtn" style="display:none">داگرتنی بەرنامەکە</a>
   <script>
-    // ئۆتۆماتیک app کراوەدەکات
     window.location.href = "${appLink}";
-
-    // دوای 2.5 چرکە ئەگەر app نەکرایەوە → دوگمەکان نیشاندەدەن
     setTimeout(function(){
       document.getElementById('sp').style.display='none';
       document.getElementById('msg').textContent='ئەگەر بەرنامەکە نەکرایەوە، دوگمەی خوارەوە بزەرێنە:';
@@ -124,26 +107,64 @@ module.exports = async (req, res) => {
     }, 2500);
   </script>
 </body>
-</html>`);
+</html>`;
+}
+
+// ── Main Handler ────────────────────────────────────────────
+module.exports = async (req, res) => {
+  const url  = new URL(req.url, `https://${req.headers.host}`);
+  const path = url.pathname;
+
+  // POST /register
+  if (req.method === "POST" && path === "/register") {
+    let body = "";
+    req.on("data", c => body += c);
+    await new Promise(r => req.on("end", r));
+    try {
+      const { postId, category, text, username, mediaUrl } = JSON.parse(body);
+      const posts = await getPosts();
+      posts[postId] = { category, text, username, mediaUrl, ts: Date.now() };
+      await setPosts(posts);
+      const link = `https://alighthelper.vercel.app/post/${category}/${postId}`;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ ok: true, link }));
+    } catch {
+      res.statusCode = 400;
+      res.end(JSON.stringify({ ok: false }));
+    }
     return;
   }
 
-  // ── GET /post/:id (کۆن — بۆ پشتگیری لینکی کۆن) ─────────
-  const match1 = path.match(/^\/post\/([^/]+)$/);
-  if (match1) {
-    const postId  = match1[1];
-    const post    = posts[postId] || {};
-    const cat     = post.category || "codes";
+  // GET /post/:category/:id
+  const m2 = path.match(/^\/post\/([^/]+)\/(.+)$/);
+  if (m2) {
+    const category = m2[1], postId = m2[2];
+    const posts    = await getPosts();
+    const post     = posts[postId] || {};
+    const { text = "", username = "Alight Helper", mediaUrl = "" } = post;
+    const appLink  = `alighthelper://post/${category}/${postId}`;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(postPage(username, text, mediaUrl, appLink, category, postId));
+    return;
+  }
+
+  // GET /post/:id (کۆن)
+  const m1 = path.match(/^\/post\/([^/]+)$/);
+  if (m1) {
+    const postId  = m1[1];
+    const posts   = await getPosts();
+    const cat     = (posts[postId] || {}).category || "codes";
     const appLink = `alighthelper://post/${cat}/${postId}`;
-    res.setHeader("Content-Type","text/html;charset=utf-8");
-    res.end(`<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=${appLink}">
-    <script>window.location.href="${appLink}";</script></head>
-    <body><a href="${appLink}">کراوەکردنی بەرنامە</a></body></html>`);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!DOCTYPE html><html><head>
+    <meta http-equiv="refresh" content="0;url=${appLink}">
+    <script>window.location.href="${appLink}";</script>
+    </head><body><a href="${appLink}">کراوەکردنی بەرنامە</a></body></html>`);
     return;
   }
 
-  // ── GET / ────────────────────────────────────────────────
-  res.setHeader("Content-Type","text/html;charset=utf-8");
+  // GET /
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!DOCTYPE html><html lang="ku" dir="rtl">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Alight Helper</title>
@@ -151,7 +172,7 @@ module.exports = async (req, res) => {
 display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px}
 .logo{font-size:60px;margin-bottom:16px}h1{font-size:28px;font-weight:700}
 p{color:rgba(255,255,255,.5);margin-top:8px}
-a{color:#7c3aed;margin-top:24px;display:block;text-decoration:none;font-size:14px}</style></head>
+a{color:#7c3aed;margin-top:24px;display:block;font-size:14px;text-decoration:none}</style></head>
 <body><div>
   <div class="logo">✦</div>
   <h1>Alight Helper</h1>
